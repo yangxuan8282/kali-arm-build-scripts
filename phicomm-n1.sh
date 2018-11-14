@@ -377,16 +377,16 @@ set -xe
 ROOT_DEV=$(findmnt / -o source -n)
 ROOT_START=$(fdisk -l $(echo "$ROOT_DEV" | sed -E 's/p?2$//') | grep "$ROOT_DEV" | awk '{ print $2 }')
 cat > /tmp/fdisk.cmd <<-EOF
-        d
-        2
+	d
+	2
 
-        n
-        p
-        2
-        ${ROOT_START}
+	n
+	p
+	2
+	${ROOT_START}
 
-        w
-        EOF
+	w
+	EOF
 fdisk "$(echo "$ROOT_DEV" | sed -E 's/p?2$//')" < /tmp/fdisk.cmd
 rm -f /tmp/fdisk.cmd
 partprobe
