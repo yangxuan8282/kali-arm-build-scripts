@@ -19,8 +19,8 @@ basedir=`pwd`/phicomm-n1-nexmon-$1
 hostname=${2:-kali}
 # Custom image file name variable - MUST NOT include .img at the end.
 imagename=${3:-kali-linux-$1-phicomm-n1-nexmon}
-# Size of image in megabytes (Default is 5500=5.5GB)
-size=5500
+# Size of image in megabytes (Default is 5000)
+size=5000
 # Suite to use.  
 # Valid options are:
 # kali-rolling, kali-dev, kali-bleeding-edge, kali-dev-only, kali-experimental, kali-last-snapshot
@@ -140,19 +140,19 @@ WantedBy=multi-user.target
 EOF
 chmod 644 kali-${architecture}/lib/systemd/system/regenerate_ssh_host_keys.service
 
-cat << EOF > kali-${architecture}/lib/systemd/system/rpiwiggle.service
+cat << EOF > kali-${architecture}/lib/systemd/system/resize2fs-once.service
 [Unit]
 Description=Resize filesystem
 Before=regenerate_ssh_host_keys.service
 [Service]
 Type=oneshot
-ExecStart=/root/scripts/rpi-wiggle.sh
-ExecStartPost=/bin/systemctl disable rpiwiggle
+ExecStart=/root/scripts/resize2fs-once
+ExecStartPost=/bin/systemctl disable resize2fs-once
 ExecStartPost=/sbin/reboot
 [Install]
 WantedBy=multi-user.target
 EOF
-chmod 644 kali-${architecture}/lib/systemd/system/rpiwiggle.service
+chmod 644 kali-${architecture}/lib/systemd/system/resize2fs-once.service
 
 mkdir -p "${basedir}"/kali-${architecture}/usr/bin/
 cat << 'EOF' > "${basedir}"/kali-${architecture}/usr/bin/monstart
@@ -205,8 +205,8 @@ apt-get --yes --allow-change-held-packages autoremove
 echo "Making the image insecure"
 sed -i -e 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 
-# Resize FS on first run (hopefully)
-#systemctl enable rpiwiggle
+# Resize FS on first run
+systemctl enable resize2fs-once
 
 # Generate SSH host keys on first run
 systemctl enable regenerate_ssh_host_keys
@@ -297,10 +297,31 @@ ln -s /usr/src/kernel build
 ln -s /usr/src/kernel source
 cd "${basedir}"
 
+cat << EOF > "${basedir}"/kali-${architecture}/boot/mkuinitrd
+#!/bin/bash
+if [ -a /boot/initrd.img-\$(uname -r) ] ; then
+    update-initramfs -u -k \$(uname -r)
+else
+    update-initramfs -c -k \$(uname -r)
+fi
+mkimage -A arm64 -O linux -T ramdisk -C none -a 0 -e 0 -n "uInitrd" -d /boot/initrd.img-\$(uname -r) /boot/uInitrd
+EOF
+
 cd "${basedir}"
 
 cp "${basedir}"/../misc/zram "${basedir}"/kali-${architecture}/etc/init.d/zram
 chmod 755 "${basedir}"/kali-${architecture}/etc/init.d/zram
+
+cat << EOF > "${basedir}"/kali-${architecture}/create-initrd
+#!/bin/bash
+update-initramfs -c -k 4.18.7
+mkimage -A arm64 -O linux -T ramdisk -C none -a 0 -e 0 -n "uInitrd" -d /boot/initrd.img-4.18.7 /boot/uInitrd
+rm -f /create-initrd
+rm -f /usr/bin/qemu-*
+EOF
+chmod 755 "${basedir}"/kali-${architecture}/create-initrd
+LANG=C systemd-nspawn -M ${machine} -D "${basedir}"/kali-${architecture} /create-initrd
+sync
 
 # Set a REGDOMAIN.  This needs to be done or wireless doesn't work correctly on the RPi 3B+
 sed -i -e 's/REGDOM.*/REGDOMAIN=00/g' "${basedir}"/kali-${architecture}/etc/default/crda
@@ -332,28 +353,46 @@ LD_LIBRARY_PATH=${NEXMON_ROOT}/buildtools/isl-0.10/.libs make ARCH=arm CC=${NEXM
 cd ${NEXMON_ROOT}/patches/bcm43455c0/7_45_154/nexmon
 make clean
 LD_LIBRARY_PATH=${NEXMON_ROOT}/buildtools/isl-0.10/.libs make ARCH=arm CC=${NEXMON_ROOT}/buildtools/gcc-arm-none-eabi-5_4-2016q2-linux-x86/bin/arm-none-eabi-
-# RPi0w->3B firmware
 mkdir -p "${basedir}"/kali-${architecture}/lib/firmware/brcm
-cp ${NEXMON_ROOT}/patches/bcm43430a1/7_45_41_46/nexmon/brcmfmac43430-sdio.bin "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43430-sdio.nexmon.bin
-cp ${NEXMON_ROOT}/patches/bcm43430a1/7_45_41_46/nexmon/brcmfmac43430-sdio.bin "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43430-sdio.bin
-wget https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/master/brcm/brcmfmac43430-sdio.txt -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43430-sdio.txt
 # RPi3B+ firmware
 cp ${NEXMON_ROOT}/patches/bcm43455c0/7_45_154/nexmon/brcmfmac43455-sdio.bin "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43455-sdio.nexmon.bin
 cp ${NEXMON_ROOT}/patches/bcm43455c0/7_45_154/nexmon/brcmfmac43455-sdio.bin "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43455-sdio.bin
 wget https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/master/brcm/brcmfmac43455-sdio.txt -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43455-sdio.txt
 # Make a backup copy of the rpi firmware in case people don't want to use the nexmon firmware.
 # The firmware used on the RPi is not the same firmware that is in the firmware-brcm package which is why we do this.
-wget https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/master/brcm/brcmfmac43430-sdio.bin -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43430-sdio.rpi.bin
 wget https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/master/brcm/brcmfmac43455-sdio.bin -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43455-sdio.rpi.bin
 # This is required for any wifi to work on the RPi 3B+
 wget https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/master/brcm/brcmfmac43455-sdio.clm_blob -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/brcmfmac43455-sdio.clm_blob
 
+# bluetooth firmware
+wget https://raw.githubusercontent.com/RPi-Distro/bluez-firmware/master/broadcom/BCM4345C0.hcd -O "${basedir}"/kali-${architecture}/lib/firmware/brcm/BCM4345C0.hcd
+
 cd "${basedir}"
 
-# rpi-wiggle
+# resize2fs-once
 mkdir -p "${basedir}"/kali-${architecture}/root/scripts
-wget https://raw.github.com/offensive-security/rpiwiggle/master/rpi-wiggle -O "${basedir}"/kali-${architecture}/root/scripts/rpi-wiggle.sh
-chmod 755 "${basedir}"/kali-${architecture}/root/scripts/rpi-wiggle.sh
+cat << 'EOF' > "${basedir}"/kali-${architecture}/root/scripts/resize2fs-once
+#!/bin/sh
+set -xe
+ROOT_DEV=$(findmnt / -o source -n)
+ROOT_START=$(fdisk -l $(echo "$ROOT_DEV" | sed -E 's/p?2$//') | grep "$ROOT_DEV" | awk '{ print $2 }')
+cat > /tmp/fdisk.cmd <<-EOF
+        d
+        2
+
+        n
+        p
+        2
+        ${ROOT_START}
+
+        w
+        EOF
+fdisk "$(echo "$ROOT_DEV" | sed -E 's/p?2$//')" < /tmp/fdisk.cmd
+rm -f /tmp/fdisk.cmd
+partprobe
+resize2fs "$ROOT_DEV"
+EOF
+chmod 755 "${basedir}"/kali-${architecture}/root/scripts/resize2fs-once
 
 sed -i -e 's/^#PermitRootLogin.*/PermitRootLogin yes/' "${basedir}"/kali-${architecture}/etc/ssh/sshd_config
 
@@ -375,16 +414,24 @@ setenv env_addr "0x10400000"
 setenv kernel_addr "0x11000000"
 setenv initrd_addr "0x13000000"
 setenv boot_start booti ${kernel_addr} ${initrd_addr} ${dtb_mem_addr}
-if fatload mmc 0 ${kernel_addr} zImage; then if fatload mmc 0 ${initrd_addr} uInitrd; then if fatload mmc 0 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload mmc 0 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
-if fatload usb 0 ${kernel_addr} zImage; then if fatload usb 0 ${initrd_addr} uInitrd; then if fatload usb 0 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 0 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
-if fatload usb 1 ${kernel_addr} zImage; then if fatload usb 1 ${initrd_addr} uInitrd; then if fatload usb 1 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 1 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
-if fatload usb 2 ${kernel_addr} zImage; then if fatload usb 2 ${initrd_addr} uInitrd; then if fatload usb 2 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 2 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
-if fatload usb 3 ${kernel_addr} zImage; then if fatload usb 3 ${initrd_addr} uInitrd; then if fatload usb 3 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 3 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
+if fatload mmc 0 ${kernel_addr} Image; then if fatload mmc 0 ${initrd_addr} uInitrd; then if fatload mmc 0 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload mmc 0 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
+if fatload usb 0 ${kernel_addr} Image; then if fatload usb 0 ${initrd_addr} uInitrd; then if fatload usb 0 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 0 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
+if fatload usb 1 ${kernel_addr} Image; then if fatload usb 1 ${initrd_addr} uInitrd; then if fatload usb 1 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 1 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
+if fatload usb 2 ${kernel_addr} Image; then if fatload usb 2 ${initrd_addr} uInitrd; then if fatload usb 2 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 2 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
+if fatload usb 3 ${kernel_addr} Image; then if fatload usb 3 ${initrd_addr} uInitrd; then if fatload usb 3 ${env_addr} uEnv.ini; then env import -t ${env_addr} ${filesize};fi; if fatload usb 3 ${dtb_mem_addr} ${dtb_name}; then run boot_start; else store dtb read ${dtb_mem_addr}; run boot_start;fi;fi;fi;
 EOF
 
 cat << 'EOF' > "${basedir}"/kali-${architecture}/boot/uEnv.ini
 dtb_name=/dtb/meson-gxl-s905d-phicomm-n1.dtb
 bootargs=root=/dev/sda2 rootflags=data=writeback rw console=ttyAML0,115200n8 console=tty0 no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0
+EOF
+
+# systemd doesn't seem to be generating the fstab properly for some people, so
+# let's create one.
+cat << EOF > "${basedir}"/kali-${architecture}/etc/fstab
+# <file system> <mount point>   <type>  <options>       <dump>  <pass>
+/dev/sda1  /boot           vfat    defaults          0       2
+/dev/sda2  /               ext4    defaults,noatime  0       1
 EOF
 
 echo "Running du to see how big kali-${architecture} is"
@@ -426,6 +473,11 @@ mount ${bootp} "${basedir}"/root/boot
 cat << EOF > kali-${architecture}/etc/resolv.conf
 nameserver 8.8.8.8
 EOF
+
+sed -i -e "s|root=/dev/sda2|root=UUID=$(blkid -s UUID -o value ${rootp})|g" "${basedir}"/kali-${architecture}/boot/uEnv.ini
+
+sed -i -e "s|root=/dev/sda1|root=UUID=$(blkid -s UUID -o value ${bootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
+sed -i -e "s|root=/dev/sda2|root=UUID=$(blkid -s UUID -o value ${rootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
 
 # And NOW we can actually make it the boot.scr that is needed.
 mkimage -A arm -T script -C none -d "${basedir}"/kali-${architecture}/boot/aml_autoscript.cmd "${basedir}"/kali-${architecture}/boot/aml_autoscript
