@@ -34,10 +34,10 @@ machine=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
 # Make sure that the cross compiler can be found in the path before we do
 # anything else, that way the builds don't fail half way through.
 export CROSS_COMPILE=aarch64-linux-gnu-
-#if [ $(compgen -c $CROSS_COMPILE | wc -l) -eq 0 ] ; then
-#    echo "Missing cross compiler. Set up PATH according to the README"
-#    exit 1
-#fi
+if [ $(compgen -c $CROSS_COMPILE | wc -l) -eq 0 ] ; then
+    echo "Missing cross compiler. Set up PATH according to the README"
+    exit 1
+fi
 # Unset CROSS_COMPILE so that if there is any native compiling needed it doesn't
 # get cross compiled.
 unset CROSS_COMPILE
@@ -476,8 +476,8 @@ EOF
 
 sed -i -e "s|root=/dev/sda2|root=UUID=$(blkid -s UUID -o value ${rootp})|g" "${basedir}"/kali-${architecture}/boot/uEnv.ini
 
-sed -i -e "s|root=/dev/sda1|root=UUID=$(blkid -s UUID -o value ${bootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
-sed -i -e "s|root=/dev/sda2|root=UUID=$(blkid -s UUID -o value ${rootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
+sed -i -e "s|/dev/sda1|UUID=$(blkid -s UUID -o value ${bootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
+sed -i -e "s|/dev/sda2|UUID=$(blkid -s UUID -o value ${rootp})|g" "${basedir}"/kali-${architecture}/etc/fstab
 
 # And NOW we can actually make it the boot.scr that is needed.
 mkimage -A arm -T script -C none -d "${basedir}"/kali-${architecture}/boot/aml_autoscript.cmd "${basedir}"/kali-${architecture}/boot/aml_autoscript
